@@ -453,27 +453,34 @@ const spellProgressEl = document.getElementById('spellProgress');
 if (SpeechRecognitionCtor){
   const recognition = new SpeechRecognitionCtor();
   recognition.lang = 'en-US';
-  recognition.continuous = true;
+  recognition.continuous = false;   // Chrome's continuous:true is unreliable and duplicates/piles up results over time.
   recognition.interimResults = true;
   recognition.maxAlternatives = 1;
-  let listening = false;
-  let finalChunks = [];
-  let finalizedCount = 0;
-  let silenceTimer = null;
+
+  let listening = false;      // whole spelling session (mic button toggled on)
+  let spelledParts = [];
+  let doneTimer = null;
   const SILENCE_MS = 1500;
 
+  function setListeningUI(on){
+    micBtn.classList.toggle('listening', on);
+    micBars.style.display = on ? 'flex' : 'none';
+    micIconStatic.style.display = on ? 'none' : 'flex';
+  }
   function updateProgress(interimText){
-    const combined = (finalChunks.join('') + (interimText||'')).toLowerCase().replace(/[^a-z]/g,'');
+    const combined = (spelledParts.join('') + (interimText||'')).toLowerCase().replace(/[^a-z]/g,'');
     spellProgressEl.textContent = combined ? '인식 중: ' + combined.split('').join(' ').toUpperCase() : '';
   }
-  function resetSilenceTimer(){
-    if (silenceTimer) clearTimeout(silenceTimer);
-    silenceTimer = setTimeout(()=>{ try{ recognition.stop(); }catch(e){} }, SILENCE_MS);
+  function scheduleAutoFinish(){
+    if (doneTimer) clearTimeout(doneTimer);
+    doneTimer = setTimeout(()=>{
+      listening = false;
+      try{ recognition.stop(); }catch(e){}
+    }, SILENCE_MS);
   }
   function finalizeAndSearch(){
-    const word = finalChunks.join('').toLowerCase().replace(/[^a-z]/g,'');
-    finalChunks = [];
-    finalizedCount = 0;
+    const word = spelledParts.join('').toLowerCase().replace(/[^a-z]/g,'');
+    spelledParts = [];
     spellProgressEl.textContent = '';
     if (word){
       document.getElementById('wordInput').value = word;
@@ -481,46 +488,52 @@ if (SpeechRecognitionCtor){
     }
   }
 
-  recognition.onstart = ()=>{
-    listening = true; micBtn.classList.add('listening');
-    micBars.style.display = 'flex'; micIconStatic.style.display = 'none';
-    finalChunks = [];
-    finalizedCount = 0;
-    setStatus('듣고 있어요... 알파벳을 한 글자씩 또는 단어를 말해주세요. 잠시 멈추면 자동으로 검색해요.', false);
-  };
-  recognition.onend = ()=>{
-    listening = false; micBtn.classList.remove('listening');
-    micBars.style.display = 'none'; micIconStatic.style.display = 'flex';
-    if (silenceTimer){ clearTimeout(silenceTimer); silenceTimer = null; }
-    finalizeAndSearch();
+  recognition.onresult = (e)=>{
+    const res = e.results[e.results.length - 1];
+    const transcript = res[0].transcript;
+    if (res.isFinal){
+      spelledParts.push(transcript.trim());
+      updateProgress('');
+    } else {
+      updateProgress(transcript);
+    }
+    scheduleAutoFinish();
   };
   recognition.onerror = (e)=>{
-    if (e.error === 'no-speech') return;
-    setStatus('음성 인식 오류: ' + e.error + '. 마이크 권한을 확인해주세요.', true);
-  };
-  recognition.onresult = (e)=>{
-    let interimText = '';
-    // Walk every result each time rather than trusting e.resultIndex, and only
-    // accept a "final" result once (by absolute index) to avoid the browser
-    // re-sending an already-finalized segment and duplicating letters.
-    for (let i = 0; i < e.results.length; i++){
-      const result = e.results[i];
-      if (result.isFinal){
-        if (i >= finalizedCount){
-          finalChunks.push(result[0].transcript.trim());
-          finalizedCount = i + 1;
-        }
-      } else if (i >= finalizedCount){
-        interimText += result[0].transcript;
-      }
+    if (e.error === 'no-speech' || e.error === 'aborted') return;
+    if (e.error === 'not-allowed' || e.error === 'service-not-allowed'){
+      listening = false;
+      setStatus('마이크 권한이 필요해요. 브라우저 설정에서 허용해주세요.', true);
+      return;
     }
-    updateProgress(interimText);
-    resetSilenceTimer();
+    setStatus('음성 인식 오류: ' + e.error, true);
   };
+  recognition.onend = ()=>{
+    if (listening){
+      // one short utterance just ended (a letter/word) — immediately listen for the next one
+      try{ recognition.start(); }
+      catch(err){ setTimeout(()=>{ try{ recognition.start(); }catch(e2){} }, 80); }
+    } else {
+      setListeningUI(false);
+      if (doneTimer){ clearTimeout(doneTimer); doneTimer = null; }
+      finalizeAndSearch();
+    }
+  };
+
   micBtn.addEventListener('click', ()=>{
-    if (listening){ recognition.stop(); return; }
+    if (listening){
+      listening = false;
+      if (doneTimer){ clearTimeout(doneTimer); doneTimer = null; }
+      try{ recognition.stop(); }catch(e){}
+      return;
+    }
+    listening = true;
+    spelledParts = [];
     document.getElementById('wordInput').value = '';
-    try{ recognition.start(); } catch(err){ setStatus('음성 인식을 시작할 수 없어요.', true); }
+    spellProgressEl.textContent = '';
+    setListeningUI(true);
+    setStatus('듣고 있어요... 알파벳을 한 글자씩 또는 단어를 말해주세요. 잠시 멈추면 자동으로 검색해요.', false);
+    try{ recognition.start(); } catch(err){ listening = false; setListeningUI(false); setStatus('음성 인식을 시작할 수 없어요.', true); }
   });
 }else{
   micBtn.addEventListener('click', ()=> setStatus('이 브라우저는 음성 인식을 지원하지 않아요. Chrome을 사용해보세요.', true));
