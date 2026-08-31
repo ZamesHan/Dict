@@ -502,7 +502,7 @@ if (SpeechRecognitionCtor){
   let listening = false;      // whole spelling session (mic button toggled on)
   let spelledParts = [];
   let doneTimer = null;
-  const SILENCE_MS = 1500;
+  const SILENCE_MS = 2800;
 
   function setListeningUI(on){
     micBtn.classList.toggle('listening', on);
@@ -539,6 +539,11 @@ if (SpeechRecognitionCtor){
     } else {
       updateProgress(transcript);
     }
+    scheduleAutoFinish();
+  };
+  recognition.onstart = ()=>{
+    // give a fresh full window every time a new listening cycle actually starts,
+    // so the restart gap between utterances doesn't eat into the pause budget
     scheduleAutoFinish();
   };
   recognition.onerror = (e)=>{
