@@ -458,6 +458,7 @@ if (SpeechRecognitionCtor){
   recognition.maxAlternatives = 1;
   let listening = false;
   let finalChunks = [];
+  let finalizedCount = 0;
   let silenceTimer = null;
   const SILENCE_MS = 1500;
 
@@ -472,6 +473,7 @@ if (SpeechRecognitionCtor){
   function finalizeAndSearch(){
     const word = finalChunks.join('').toLowerCase().replace(/[^a-z]/g,'');
     finalChunks = [];
+    finalizedCount = 0;
     spellProgressEl.textContent = '';
     if (word){
       document.getElementById('wordInput').value = word;
@@ -483,6 +485,7 @@ if (SpeechRecognitionCtor){
     listening = true; micBtn.classList.add('listening');
     micBars.style.display = 'flex'; micIconStatic.style.display = 'none';
     finalChunks = [];
+    finalizedCount = 0;
     setStatus('듣고 있어요... 알파벳을 한 글자씩 또는 단어를 말해주세요. 잠시 멈추면 자동으로 검색해요.', false);
   };
   recognition.onend = ()=>{
@@ -497,16 +500,26 @@ if (SpeechRecognitionCtor){
   };
   recognition.onresult = (e)=>{
     let interimText = '';
-    for (let i = e.resultIndex; i < e.results.length; i++){
-      const transcript = e.results[i][0].transcript;
-      if (e.results[i].isFinal) finalChunks.push(transcript.trim());
-      else interimText += transcript;
+    // Walk every result each time rather than trusting e.resultIndex, and only
+    // accept a "final" result once (by absolute index) to avoid the browser
+    // re-sending an already-finalized segment and duplicating letters.
+    for (let i = 0; i < e.results.length; i++){
+      const result = e.results[i];
+      if (result.isFinal){
+        if (i >= finalizedCount){
+          finalChunks.push(result[0].transcript.trim());
+          finalizedCount = i + 1;
+        }
+      } else if (i >= finalizedCount){
+        interimText += result[0].transcript;
+      }
     }
     updateProgress(interimText);
     resetSilenceTimer();
   };
   micBtn.addEventListener('click', ()=>{
     if (listening){ recognition.stop(); return; }
+    document.getElementById('wordInput').value = '';
     try{ recognition.start(); } catch(err){ setStatus('음성 인식을 시작할 수 없어요.', true); }
   });
 }else{
