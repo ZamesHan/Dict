@@ -55,6 +55,9 @@
   .browse-list{ display:flex; flex-wrap:wrap; gap:6px; margin-top:10px; }
   .browse-list button{ font-family:'JetBrains Mono', monospace; font-size:11.5px; background:#fff; border:1px solid var(--rule); color:var(--charcoal); padding:4px 9px; border-radius:3px; cursor:pointer; }
   .browse-list button:hover{ border-color:var(--ink); color:var(--ink); }
+  .nato-grid{ display:grid; grid-template-columns:repeat(auto-fill, minmax(90px,1fr)); gap:6px; margin-top:10px; }
+  .nato-grid .cell{ font-family:'JetBrains Mono', monospace; font-size:12px; background:#fff; border:1px solid var(--rule); border-radius:3px; padding:5px 8px; color:var(--charcoal); }
+  .nato-grid .cell b{ color:var(--ink); }
 
   .card{ margin-top:28px; background:#FBF7EC; border:1px solid var(--rule); border-top:4px solid var(--ink); padding:30px 32px 26px; position:relative; box-shadow:0 14px 30px -20px rgba(27,42,74,.5); }
   .card.hidden{ display:none; }
@@ -130,6 +133,11 @@
       <button id="reviewBtn2" class="review-btn" disabled>복습: 뜻→단어 (새 탭)</button>
     </div>
   </div>
+
+  <details class="browse">
+    <summary>나토(NATO) 음성 알파벳 표 보기 ▾</summary>
+    <div class="nato-grid" id="natoGrid"></div>
+  </details>
 
   <details class="browse">
     <summary>내장 사전에 있는 단어 목록 보기 ▾</summary>
@@ -271,6 +279,19 @@ function renderBrowseList(){
   });
 }
 renderBrowseList();
+
+const NATO_PAIRS = 'A Alpha,B Bravo,C Charlie,D Delta,E Echo,F Foxtrot,G Golf,H Hotel,I India,J Juliett,K Kilo,L Lima,M Mike,N November,O Oscar,P Papa,Q Quebec,R Romeo,S Sierra,T Tango,U Uniform,V Victor,W Whiskey,X X-ray,Y Yankee,Z Zulu'.split(',');
+function renderNatoGrid(){
+  const wrap = document.getElementById('natoGrid');
+  NATO_PAIRS.forEach(pair=>{
+    const [letter, word] = pair.split(' ');
+    const d = document.createElement('div');
+    d.className = 'cell';
+    d.innerHTML = '<b>'+letter+'</b> '+word;
+    wrap.appendChild(d);
+  });
+}
+renderNatoGrid();
 
 /* ---------------- lookup (fully offline) ---------------- */
 let currentWord = '';
@@ -450,36 +471,36 @@ const micIconStatic = document.getElementById('micIconStatic');
 
 const spellProgressEl = document.getElementById('spellProgress');
 
-/* NATO-style phonetic alphabet + common single-letter mishearings, so confusable
-   letters (b/v, g/z, etc.) resolve correctly whether the user spells the letter
-   plainly, says the phonetic codeword, or the recognizer mishears "v" as "vee". */
+/* Official NATO phonetic alphabet only. Keeping this to the real 26 codewords
+   (instead of guessed sound-alikes like "bee"/"vee"/"oh") avoids colliding with
+   real English words a user might search normally (e.g. "sea", "eye", "oh"). */
 const PHONETIC_MAP = {
   alpha:'a', alfa:'a',
-  bravo:'b', bee:'b', be:'b',
-  charlie:'c', sea:'c', see:'c',
-  delta:'d', dee:'d',
-  echo:'e', ee:'e',
-  foxtrot:'f', eff:'f',
-  golf:'g', gee:'g', jee:'g',
-  hotel:'h', aitch:'h', h:'h',
-  india:'i', eye:'i', aye:'i',
-  juliet:'j', juliett:'j', jay:'j',
-  kilo:'k', kay:'k',
-  lima:'l', el:'l',
-  mike:'m', em:'m',
-  november:'n', en:'n',
-  oscar:'o', oh:'o',
-  papa:'p', pee:'p',
-  quebec:'q', cue:'q', queue:'q',
-  romeo:'r', are:'r', ar:'r',
-  sierra:'s', ess:'s',
-  tango:'t', tee:'t',
-  uniform:'u', you:'u', yoo:'u',
-  victor:'v', vee:'v',
-  whiskey:'w', doubleyou:'w',
-  xray:'x', ex:'x',
-  yankee:'y', why:'y',
-  zulu:'z', zee:'z', zed:'z'
+  bravo:'b',
+  charlie:'c',
+  delta:'d',
+  echo:'e',
+  foxtrot:'f',
+  golf:'g',
+  hotel:'h',
+  india:'i',
+  juliet:'j', juliett:'j',
+  kilo:'k',
+  lima:'l',
+  mike:'m',
+  november:'n',
+  oscar:'o',
+  papa:'p',
+  quebec:'q',
+  romeo:'r',
+  sierra:'s',
+  tango:'t',
+  uniform:'u',
+  victor:'v',
+  whiskey:'w',
+  xray:'x',
+  yankee:'y',
+  zulu:'z'
 };
 function resolveChunk(raw){
   const cleaned = (raw||'').toLowerCase().trim();
@@ -579,7 +600,7 @@ if (SpeechRecognitionCtor){
     document.getElementById('wordInput').value = '';
     spellProgressEl.textContent = '';
     setListeningUI(true);
-    setStatus('듣고 있어요... 헷갈리는 글자는 "V as in Victor"처럼 말해도 돼요. 잠시 멈추면 자동으로 검색해요.', false);
+    setStatus('듣고 있어요... 알파벳은 Alpha, Bravo, Charlie처럼 나토 발음으로 말해주세요. 잠시 멈추면 자동으로 검색해요.', false);
     try{ recognition.start(); } catch(err){ listening = false; setListeningUI(false); setStatus('음성 인식을 시작할 수 없어요.', true); }
   });
 }else{
