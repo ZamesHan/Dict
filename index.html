@@ -450,6 +450,48 @@ const micIconStatic = document.getElementById('micIconStatic');
 
 const spellProgressEl = document.getElementById('spellProgress');
 
+/* NATO-style phonetic alphabet + common single-letter mishearings, so confusable
+   letters (b/v, g/z, etc.) resolve correctly whether the user spells the letter
+   plainly, says the phonetic codeword, or the recognizer mishears "v" as "vee". */
+const PHONETIC_MAP = {
+  alpha:'a', alfa:'a',
+  bravo:'b', bee:'b', be:'b',
+  charlie:'c', sea:'c', see:'c',
+  delta:'d', dee:'d',
+  echo:'e', ee:'e',
+  foxtrot:'f', eff:'f',
+  golf:'g', gee:'g', jee:'g',
+  hotel:'h', aitch:'h', h:'h',
+  india:'i', eye:'i', aye:'i',
+  juliet:'j', juliett:'j', jay:'j',
+  kilo:'k', kay:'k',
+  lima:'l', el:'l',
+  mike:'m', em:'m',
+  november:'n', en:'n',
+  oscar:'o', oh:'o',
+  papa:'p', pee:'p',
+  quebec:'q', cue:'q', queue:'q',
+  romeo:'r', are:'r', ar:'r',
+  sierra:'s', ess:'s',
+  tango:'t', tee:'t',
+  uniform:'u', you:'u', yoo:'u',
+  victor:'v', vee:'v',
+  whiskey:'w', doubleyou:'w',
+  xray:'x', ex:'x',
+  yankee:'y', why:'y',
+  zulu:'z', zee:'z', zed:'z'
+};
+function resolveChunk(raw){
+  const cleaned = (raw||'').toLowerCase().trim();
+  const lettersOnly = cleaned.replace(/[^a-z]/g,'');
+  if (!lettersOnly) return '';
+  if (lettersOnly.length === 1) return lettersOnly;
+  const asInMatch = cleaned.match(/(?:as in|for|like)\s+([a-z]+)$/);
+  if (asInMatch && PHONETIC_MAP[asInMatch[1]]) return PHONETIC_MAP[asInMatch[1]];
+  if (PHONETIC_MAP[lettersOnly]) return PHONETIC_MAP[lettersOnly];
+  return lettersOnly; // not a recognized codeword — treat as a normal spoken word/chunk
+}
+
 if (SpeechRecognitionCtor){
   const recognition = new SpeechRecognitionCtor();
   recognition.lang = 'en-US';
@@ -492,7 +534,7 @@ if (SpeechRecognitionCtor){
     const res = e.results[e.results.length - 1];
     const transcript = res[0].transcript;
     if (res.isFinal){
-      spelledParts.push(transcript.trim());
+      spelledParts.push(resolveChunk(transcript));
       updateProgress('');
     } else {
       updateProgress(transcript);
@@ -532,7 +574,7 @@ if (SpeechRecognitionCtor){
     document.getElementById('wordInput').value = '';
     spellProgressEl.textContent = '';
     setListeningUI(true);
-    setStatus('듣고 있어요... 알파벳을 한 글자씩 또는 단어를 말해주세요. 잠시 멈추면 자동으로 검색해요.', false);
+    setStatus('듣고 있어요... 헷갈리는 글자는 "V as in Victor"처럼 말해도 돼요. 잠시 멈추면 자동으로 검색해요.', false);
     try{ recognition.start(); } catch(err){ listening = false; setListeningUI(false); setStatus('음성 인식을 시작할 수 없어요.', true); }
   });
 }else{
