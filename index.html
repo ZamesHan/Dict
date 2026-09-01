@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>말하는 영어사전</title>
+<title>말듣는 영어사전</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,wght@0,400;0,500;0,600;1,400;1,500&family=JetBrains+Mono:wght@400;500;600&family=Noto+Sans+KR:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
@@ -30,7 +30,8 @@
   #wordInput::placeholder{ color:#9a8f6f; font-style:italic; font-size:16px; }
   .icon-btn{ border:none; background:var(--ink); color:var(--paper); width:42px; height:42px; border-radius:2px; cursor:pointer; display:flex; align-items:center; justify-content:center; flex-shrink:0; transition:transform .15s ease, background .2s ease; position:relative; }
   .icon-btn:hover{ transform:translateY(-1px); }
-  #searchBtn{ background:transparent; color:var(--ink); border:1px solid var(--ink); font-family:'Noto Sans KR',sans-serif; font-size:13px; font-weight:600; width:auto; padding:0 16px; }
+  #searchBtn{ background:transparent; color:var(--ink); border:1px solid var(--ink); width:42px; padding:0; display:flex; align-items:center; justify-content:center; }
+  #searchBtn:hover{ background:var(--ink); color:var(--paper); }
   #micBtn.listening{ background:var(--red-pin); }
   .mic-bars{ display:flex; align-items:center; gap:2px; height:16px; }
   .mic-bars span{ width:2.5px; background:var(--paper); border-radius:2px; height:6px; display:block; }
@@ -85,8 +86,6 @@
   .etym-empty{ font-size:13px; color:#9a8f6f; font-style:italic; }
 
   .spell-progress{ font-family:'JetBrains Mono', monospace; font-size:13px; color:var(--sage); letter-spacing:.08em; min-height:18px; padding:4px 2px 0; }
-  .debug-panel{ font-family:'JetBrains Mono', monospace; font-size:11.5px; color:#6b6250; background:#fff; border:1px dashed var(--rule); border-radius:3px; padding:8px 10px; margin-top:6px; white-space:pre-line; min-height:14px; }
-  .debug-panel .win{ color:var(--sage); font-weight:700; }
   .letterbox-row{ display:flex; flex-wrap:wrap; gap:8px; margin-top:14px; }
   .letter-box{ width:42px; height:42px; border:2px solid var(--rule); border-radius:6px; background:#fff; font-family:'JetBrains Mono', monospace; font-size:19px; font-weight:700; color:var(--ink); display:flex; align-items:center; justify-content:center; cursor:pointer; transition:border-color .15s, background .15s; padding:0; }
   .letter-box:hover{ border-color:var(--gold); }
@@ -111,8 +110,7 @@
 <div class="app">
 
   <div class="masthead">
-    <h1>말하는 영어사전</h1>
-    <span class="sub">Voice · Meaning · Origin · Forms</span>
+    <h1>말듣는 영어사전</h1>
   </div>
   <div class="catalog-label">
     <span class="offline-badge">오프라인 내장 사전 · 정성 60 단어 + 확장 A~Z 약 9.2만 단어</span>
@@ -132,12 +130,13 @@
         <span></span><span></span><span></span><span></span><span></span>
       </span>
     </button>
-    <button id="searchBtn">찾기</button>
+    <button id="searchBtn" title="찾기">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2"/><path d="M20 20l-4.35-4.35" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+    </button>
   </div>
 
   <div id="status"></div>
   <div class="spell-progress" id="spellProgress"></div>
-  <div class="debug-panel" id="debugPanel"></div>
   <div class="letterbox-row" id="letterBoxRow"></div>
   <div class="letterbox-hint">칸을 누르면 그 글자만 다시 말해서 고칠 수 있어요. "+"를 누르면 칸이 추가돼요.</div>
   <div class="recent-row">
@@ -484,17 +483,6 @@ const micBars = document.getElementById('micBars');
 const micIconStatic = document.getElementById('micIconStatic');
 
 const spellProgressEl = document.getElementById('spellProgress');
-const debugPanelEl = document.getElementById('debugPanel');
-function renderDebug(alternatives, winnerIndex){
-  if (!alternatives || !alternatives.length){ debugPanelEl.textContent = ''; return; }
-  const lines = alternatives.map((a, i)=>{
-    const rank = (i+1) + '순위';
-    const letterDisp = a.letter ? a.letter.toUpperCase() : '-';
-    const pick = (i === winnerIndex) ? '  ← 선택됨' : '';
-    return rank + ': "' + a.raw + '" → ' + letterDisp + ' (거리 ' + a.dist + ')' + pick;
-  });
-  debugPanelEl.textContent = lines.join('\n');
-}
 
 /* Official NATO phonetic alphabet only. Keeping this to the real 26 codewords
    (instead of guessed sound-alikes like "bee"/"vee"/"oh") avoids colliding with
@@ -691,7 +679,6 @@ if (SpeechRecognitionCtor){
     if (micMode === 'word'){
       const raw = res[0].transcript;
       const word = raw.toLowerCase().replace(/[^a-z]/g,'');
-      debugPanelEl.textContent = '인식된 단어: "' + raw + '" → ' + (word || '(글자 없음)');
       if (word){
         letterBoxes = word.split('');
         renderLetterBoxes();
@@ -702,7 +689,6 @@ if (SpeechRecognitionCtor){
       // guard: the box may have been long-press-deleted while this recording was in flight
       if (micMode >= letterBoxes.length){ spellProgressEl.textContent = ''; return; }
       const result = resolveChunk(res);
-      renderDebug(result.alternatives, result.winnerIndex);
       if (result.letter){
         letterBoxes[micMode] = result.letter;
         renderLetterBoxes();
@@ -732,7 +718,6 @@ if (SpeechRecognitionCtor){
     letterBoxes = [];
     renderLetterBoxes();
     spellProgressEl.textContent = '';
-    debugPanelEl.textContent = '';
     setListeningUI(true);
     setStatus('단어를 통째로 한 번에 말해주세요.', false);
     try{ recognition.start(); }
@@ -744,7 +729,6 @@ if (SpeechRecognitionCtor){
     micMode = index;
     micBusy = true;
     spellProgressEl.textContent = '';
-    debugPanelEl.textContent = '';
     setListeningUI(true);
     highlightBox(index, true);
     setStatus((index+1)+'번째 칸: 알파벳 하나를 나토 발음(Alpha, Bravo...)으로 말해주세요.', false);
