@@ -501,7 +501,32 @@ const PHONETIC_MAP = {
   xray:'x',
   yankee:'y',
   zulu:'z', zebra:'z', zoo:'z'
-};function resolveChunk(raw){
+};
+
+function levenshtein(a, b){
+  const m = a.length, n = b.length;
+  const dp = [];
+  for (let i = 0; i <= m; i++){ dp.push(new Array(n+1).fill(0)); dp[i][0] = i; }
+  for (let j = 0; j <= n; j++) dp[0][j] = j;
+  for (let i = 1; i <= m; i++){
+    for (let j = 1; j <= n; j++){
+      dp[i][j] = (a[i-1] === b[j-1])
+        ? dp[i-1][j-1]
+        : 1 + Math.min(dp[i-1][j], dp[i][j-1], dp[i-1][j-1]);
+    }
+  }
+  return dp[m][n];
+}
+function closestNatoLetter(word){
+  let bestLetter = null, bestDist = Infinity;
+  for (const codeword in PHONETIC_MAP){
+    const d = levenshtein(word, codeword);
+    if (d < bestDist){ bestDist = d; bestLetter = PHONETIC_MAP[codeword]; }
+  }
+  return bestLetter;
+}
+
+function resolveChunk(raw){
   const cleaned = (raw||'').toLowerCase().trim();
   const lettersOnly = cleaned.replace(/[^a-z]/g,'');
   if (!lettersOnly) return '';
@@ -509,7 +534,8 @@ const PHONETIC_MAP = {
   const asInMatch = cleaned.match(/(?:as in|for|like)\s+([a-z]+)$/);
   if (asInMatch && PHONETIC_MAP[asInMatch[1]]) return PHONETIC_MAP[asInMatch[1]];
   if (PHONETIC_MAP[lettersOnly]) return PHONETIC_MAP[lettersOnly];
-  return lettersOnly.charAt(0); // not a recognized codeword — take only the first letter, even if a whole word was heard
+  // no exact match — find the NATO codeword it sounds closest to, and use that letter
+  return closestNatoLetter(lettersOnly) || lettersOnly.charAt(0);
 }
 
 if (SpeechRecognitionCtor){
