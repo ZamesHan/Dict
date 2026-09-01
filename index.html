@@ -85,6 +85,8 @@
   .etym-empty{ font-size:13px; color:#9a8f6f; font-style:italic; }
 
   .spell-progress{ font-family:'JetBrains Mono', monospace; font-size:13px; color:var(--sage); letter-spacing:.08em; min-height:18px; padding:4px 2px 0; }
+  .debug-panel{ font-family:'JetBrains Mono', monospace; font-size:11.5px; color:#6b6250; background:#fff; border:1px dashed var(--rule); border-radius:3px; padding:8px 10px; margin-top:6px; white-space:pre-line; min-height:14px; }
+  .debug-panel .win{ color:var(--sage); font-weight:700; }
   .recent-row{ display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-top:14px; }
   .recent-row .recent{ margin-top:0; flex:1; }
   .review-btns{ display:flex; gap:8px; flex-wrap:wrap; }
@@ -126,6 +128,7 @@
 
   <div id="status"></div>
   <div class="spell-progress" id="spellProgress"></div>
+  <div class="debug-panel" id="debugPanel"></div>
   <div class="recent-row">
     <div class="recent" id="recent"></div>
     <div class="review-btns">
@@ -470,6 +473,17 @@ const micBars = document.getElementById('micBars');
 const micIconStatic = document.getElementById('micIconStatic');
 
 const spellProgressEl = document.getElementById('spellProgress');
+const debugPanelEl = document.getElementById('debugPanel');
+function renderDebug(alternatives, winnerIndex){
+  if (!alternatives || !alternatives.length){ debugPanelEl.textContent = ''; return; }
+  const lines = alternatives.map((a, i)=>{
+    const rank = (i+1) + '순위';
+    const letterDisp = a.letter ? a.letter.toUpperCase() : '-';
+    const pick = (i === winnerIndex) ? '  ← 선택됨' : '';
+    return rank + ': "' + a.raw + '" → ' + letterDisp + ' (거리 ' + a.dist + ')' + pick;
+  });
+  debugPanelEl.textContent = lines.join('\n');
+}
 
 /* Official NATO phonetic alphabet only. Keeping this to the real 26 codewords
    (instead of guessed sound-alikes like "bee"/"vee"/"oh") avoids colliding with
@@ -539,17 +553,28 @@ function resolveOneTranscript(raw){
 }
 // The recognizer often mishears the top guess; its other ranked alternatives
 // (SpeechRecognitionResult holds up to maxAlternatives guesses) sometimes match
-// a NATO codeword far better. Check all of them and keep whichever is closest,
-// rather than blindly trusting alternative #0.
-function resolveChunk(speechResult){
-  let best = null;
+// a NATO codeword far better. Evaluate every alternative, keep the closest one.
+function evaluateAlternatives(speechResult){
+  const out = [];
   for (let i = 0; i < speechResult.length; i++){
-    const candidate = resolveOneTranscript(speechResult[i].transcript);
-    if (!candidate) continue;
-    if (candidate.dist === 0) return candidate.letter; // can't do better than an exact match
-    if (!best || candidate.dist < best.dist) best = candidate;
+    const raw = speechResult[i].transcript;
+    const info = resolveOneTranscript(raw);
+    out.push({ index: i, raw, letter: info ? info.letter : '', dist: info ? info.dist : Infinity });
   }
-  return best ? best.letter : '';
+  return out;
+}
+function pickWinner(alternatives){
+  let winner = null;
+  for (const a of alternatives){ if (a.dist === 0){ winner = a; break; } }
+  if (!winner){
+    for (const a of alternatives){ if (!winner || a.dist < winner.dist) winner = a; }
+  }
+  return winner;
+}
+function resolveChunk(speechResult){
+  const alternatives = evaluateAlternatives(speechResult);
+  const winner = pickWinner(alternatives);
+  return { letter: winner ? winner.letter : '', alternatives, winnerIndex: winner ? winner.index : -1 };
 }
 
 if (SpeechRecognitionCtor){
@@ -613,7 +638,9 @@ if (SpeechRecognitionCtor){
     const res = e.results[e.results.length - 1];
     const transcript = res[0].transcript; // top guess, only used for the live progress display
     if (res.isFinal){
-      spelledParts.push(resolveChunk(res)); // checks all ranked alternatives, not just the top one
+      const result = resolveChunk(res); // checks all ranked alternatives, not just the top one
+      renderDebug(result.alternatives, result.winnerIndex);
+      if (result.letter) spelledParts.push(result.letter);
       updateProgress('');
     } else {
       updateProgress(transcript);
@@ -671,6 +698,7 @@ if (SpeechRecognitionCtor){
     spelledParts = [];
     document.getElementById('wordInput').value = '';
     spellProgressEl.textContent = '';
+    debugPanelEl.textContent = '';
     setListeningUI(true);
     setStatus('듣고 있어요... 알파벳은 Alpha, Bravo, Charlie처럼 나토 발음으로 말해주세요. 잠시 멈추면 자동으로 검색해요.', false);
     try{
