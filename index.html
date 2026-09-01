@@ -280,7 +280,7 @@ function renderBrowseList(){
 }
 renderBrowseList();
 
-const NATO_PAIRS = 'A Alpha,B Bravo,C Charlie,D Delta,E Echo,F Foxtrot,G Golf,H Hotel,I India,J Juliett,K Kilo,L Lima,M Mike,N November,O Oscar,P Papa,Q Quebec,R Romeo,S Sierra,T Tango,U Uniform,V Victor,W Whiskey,X X-ray,Y Yankee,Z Zulu'.split(',');
+const NATO_PAIRS = 'A Alpha,B Bravo,C Charlie,D Delta,E Echo,F Foxtrot,G Golf,H Hotel,I India,J Juliett,K Kilo,L Lima,M Mike,N November,O Oscar,P Papa,Q Quebec,R Romeo,S Sierra,T Tango,U Uniform,V Victor,W Whiskey,X X-ray,Y Yankee,Z Zulu(zebra·zoo도가능)'.split(',');
 function renderNatoGrid(){
   const wrap = document.getElementById('natoGrid');
   NATO_PAIRS.forEach(pair=>{
@@ -500,9 +500,8 @@ const PHONETIC_MAP = {
   whiskey:'w',
   xray:'x',
   yankee:'y',
-  zulu:'z'
-};
-function resolveChunk(raw){
+  zulu:'z', zebra:'z', zoo:'z'
+};function resolveChunk(raw){
   const cleaned = (raw||'').toLowerCase().trim();
   const lettersOnly = cleaned.replace(/[^a-z]/g,'');
   if (!lettersOnly) return '';
