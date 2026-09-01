@@ -509,7 +509,7 @@ const PHONETIC_MAP = {
   const asInMatch = cleaned.match(/(?:as in|for|like)\s+([a-z]+)$/);
   if (asInMatch && PHONETIC_MAP[asInMatch[1]]) return PHONETIC_MAP[asInMatch[1]];
   if (PHONETIC_MAP[lettersOnly]) return PHONETIC_MAP[lettersOnly];
-  return lettersOnly; // not a recognized codeword — treat as a normal spoken word/chunk
+  return lettersOnly.charAt(0); // not a recognized codeword — take only the first letter, even if a whole word was heard
 }
 
 if (SpeechRecognitionCtor){
