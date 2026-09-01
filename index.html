@@ -517,25 +517,39 @@ function levenshtein(a, b){
   }
   return dp[m][n];
 }
-function closestNatoLetter(word){
+function closestNatoMatch(word){
   let bestLetter = null, bestDist = Infinity;
   for (const codeword in PHONETIC_MAP){
     const d = levenshtein(word, codeword);
     if (d < bestDist){ bestDist = d; bestLetter = PHONETIC_MAP[codeword]; }
   }
-  return bestLetter;
+  return {letter: bestLetter, dist: bestDist};
 }
-
-function resolveChunk(raw){
+function resolveOneTranscript(raw){
+  // returns {letter, dist} — dist 0 means an exact/high-confidence match
   const cleaned = (raw||'').toLowerCase().trim();
   const lettersOnly = cleaned.replace(/[^a-z]/g,'');
-  if (!lettersOnly) return '';
-  if (lettersOnly.length === 1) return lettersOnly;
+  if (!lettersOnly) return null;
+  if (lettersOnly.length === 1) return {letter: lettersOnly, dist: 0};
   const asInMatch = cleaned.match(/(?:as in|for|like)\s+([a-z]+)$/);
-  if (asInMatch && PHONETIC_MAP[asInMatch[1]]) return PHONETIC_MAP[asInMatch[1]];
-  if (PHONETIC_MAP[lettersOnly]) return PHONETIC_MAP[lettersOnly];
-  // no exact match — find the NATO codeword it sounds closest to, and use that letter
-  return closestNatoLetter(lettersOnly) || lettersOnly.charAt(0);
+  if (asInMatch && PHONETIC_MAP[asInMatch[1]]) return {letter: PHONETIC_MAP[asInMatch[1]], dist: 0};
+  if (PHONETIC_MAP[lettersOnly]) return {letter: PHONETIC_MAP[lettersOnly], dist: 0};
+  const match = closestNatoMatch(lettersOnly);
+  return {letter: match.letter || lettersOnly.charAt(0), dist: match.dist};
+}
+// The recognizer often mishears the top guess; its other ranked alternatives
+// (SpeechRecognitionResult holds up to maxAlternatives guesses) sometimes match
+// a NATO codeword far better. Check all of them and keep whichever is closest,
+// rather than blindly trusting alternative #0.
+function resolveChunk(speechResult){
+  let best = null;
+  for (let i = 0; i < speechResult.length; i++){
+    const candidate = resolveOneTranscript(speechResult[i].transcript);
+    if (!candidate) continue;
+    if (candidate.dist === 0) return candidate.letter; // can't do better than an exact match
+    if (!best || candidate.dist < best.dist) best = candidate;
+  }
+  return best ? best.letter : '';
 }
 
 if (SpeechRecognitionCtor){
@@ -543,7 +557,7 @@ if (SpeechRecognitionCtor){
   recognition.lang = 'en-US';
   recognition.continuous = false;   // Chrome's continuous:true is unreliable and duplicates/piles up results over time.
   recognition.interimResults = true;
-  recognition.maxAlternatives = 1;
+  recognition.maxAlternatives = 5; // check multiple guesses, not just the top one — helps when the top guess is wrong
 
   let listening = false;      // whole spelling session (mic button toggled on)
   let spelledParts = [];
@@ -597,9 +611,9 @@ if (SpeechRecognitionCtor){
 
   recognition.onresult = (e)=>{
     const res = e.results[e.results.length - 1];
-    const transcript = res[0].transcript;
+    const transcript = res[0].transcript; // top guess, only used for the live progress display
     if (res.isFinal){
-      spelledParts.push(resolveChunk(transcript));
+      spelledParts.push(resolveChunk(res)); // checks all ranked alternatives, not just the top one
       updateProgress('');
     } else {
       updateProgress(transcript);
