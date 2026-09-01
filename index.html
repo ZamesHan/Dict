@@ -93,6 +93,7 @@
   .letter-box.empty{ border-style:dashed; color:#c9bfa0; }
   .letter-box.add-box{ border-style:dashed; color:var(--sage); font-size:22px; font-weight:400; }
   .letter-box.listening{ border-color:var(--red-pin); background:#fdeceb; animation:boxpulse 1s ease-in-out infinite; }
+  .letter-box.holding{ border-color:var(--red-pin); background:#f6c9c2; transform:scale(.92); transition:background .6s linear, transform .6s linear; }
   @keyframes boxpulse{ 0%,100%{ box-shadow:0 0 0 0 rgba(166,70,47,.35); } 50%{ box-shadow:0 0 0 6px rgba(166,70,47,0); } }
   .letterbox-hint{ font-size:11.5px; color:#9a8f6f; margin-top:6px; }
   .recent-row{ display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-top:14px; }
@@ -588,6 +589,17 @@ function resolveChunk(speechResult){
 }
 
 let letterBoxes = []; // array of single-char strings; '' means an empty/unfilled box
+let micBusy = false;
+let micMode = null; // 'word' | a letter-box index number
+let recognitionRef = null;
+let startBoxCapture = function(){ setStatus('이 브라우저는 음성 인식을 지원하지 않아요. Chrome을 사용해보세요.', true); };
+const LONG_PRESS_MS = 600;
+
+function setListeningUI(on){
+  micBtn.classList.toggle('listening', on);
+  micBars.style.display = on ? 'flex' : 'none';
+  micIconStatic.style.display = on ? 'none' : 'flex';
+}
 
 function renderLetterBoxes(){
   const row = document.getElementById('letterBoxRow');
@@ -596,8 +608,8 @@ function renderLetterBoxes(){
     const box = document.createElement('button');
     box.className = 'letter-box' + (ch ? '' : ' empty');
     box.textContent = ch ? ch.toUpperCase() : '?';
-    box.title = '눌러서 이 글자만 다시 말하기';
-    box.onclick = ()=> startBoxCapture(i);
+    box.title = '눌러서 이 글자만 다시 말하기 · 길게 눌러서 삭제';
+    attachBoxPressHandlers(box, i);
     row.appendChild(box);
   });
   const addBtn = document.createElement('button');
@@ -611,6 +623,42 @@ function renderLetterBoxes(){
   };
   row.appendChild(addBtn);
   syncWordInputFromBoxes();
+}
+function attachBoxPressHandlers(box, index){
+  let pressTimer = null;
+  let longPressed = false;
+  function startPress(){
+    longPressed = false;
+    box.classList.add('holding');
+    pressTimer = setTimeout(()=>{
+      longPressed = true;
+      deleteBox(index);
+    }, LONG_PRESS_MS);
+  }
+  function cancelPress(){
+    if (pressTimer){ clearTimeout(pressTimer); pressTimer = null; }
+    box.classList.remove('holding');
+  }
+  box.addEventListener('mousedown', startPress);
+  box.addEventListener('touchstart', startPress, {passive:true});
+  box.addEventListener('mouseup', cancelPress);
+  box.addEventListener('mouseleave', cancelPress);
+  box.addEventListener('touchend', cancelPress);
+  box.addEventListener('touchcancel', cancelPress);
+  box.addEventListener('click', (e)=>{
+    if (longPressed){ e.preventDefault(); e.stopPropagation(); longPressed = false; return; }
+    startBoxCapture(index);
+  });
+}
+function deleteBox(index){
+  if (micBusy && micMode === index){
+    try{ if (recognitionRef) recognitionRef.stop(); }catch(e){}
+    micBusy = false;
+    micMode = null;
+    setListeningUI(false);
+  }
+  letterBoxes.splice(index, 1);
+  renderLetterBoxes();
 }
 function syncWordInputFromBoxes(){
   document.getElementById('wordInput').value = letterBoxes.join('');
@@ -627,18 +675,11 @@ if (SpeechRecognitionCtor){
   recognition.continuous = false;
   recognition.interimResults = true;
   recognition.maxAlternatives = 5; // check multiple guesses, not just the top one — helps when the top guess is wrong
+  recognitionRef = recognition;
 
-  let busy = false;
-  let mode = null; // 'word' | a letter-box index number
-
-  function setListeningUI(on){
-    micBtn.classList.toggle('listening', on);
-    micBars.style.display = on ? 'flex' : 'none';
-    micIconStatic.style.display = on ? 'none' : 'flex';
-  }
   function stopListeningVisuals(){
     setListeningUI(false);
-    if (typeof mode === 'number') highlightBox(mode, false);
+    if (typeof micMode === 'number') highlightBox(micMode, false);
   }
 
   recognition.onresult = (e)=>{
@@ -647,7 +688,7 @@ if (SpeechRecognitionCtor){
       spellProgressEl.textContent = '인식 중: ' + res[0].transcript;
       return;
     }
-    if (mode === 'word'){
+    if (micMode === 'word'){
       const raw = res[0].transcript;
       const word = raw.toLowerCase().replace(/[^a-z]/g,'');
       debugPanelEl.textContent = '인식된 단어: "' + raw + '" → ' + (word || '(글자 없음)');
@@ -657,11 +698,13 @@ if (SpeechRecognitionCtor){
       } else {
         setStatus('단어를 알아듣지 못했어요. 다시 말해주세요.', true);
       }
-    } else if (typeof mode === 'number'){
+    } else if (typeof micMode === 'number'){
+      // guard: the box may have been long-press-deleted while this recording was in flight
+      if (micMode >= letterBoxes.length){ spellProgressEl.textContent = ''; return; }
       const result = resolveChunk(res);
       renderDebug(result.alternatives, result.winnerIndex);
       if (result.letter){
-        letterBoxes[mode] = result.letter;
+        letterBoxes[micMode] = result.letter;
         renderLetterBoxes();
       } else {
         setStatus('글자를 알아듣지 못했어요. 칸을 다시 눌러 말해주세요.', true);
@@ -677,15 +720,15 @@ if (SpeechRecognitionCtor){
     }
   };
   recognition.onend = ()=>{
-    busy = false;
+    micBusy = false;
     stopListeningVisuals();
-    mode = null;
+    micMode = null;
   };
 
   micBtn.addEventListener('click', ()=>{
-    if (busy){ try{ recognition.stop(); }catch(e){} return; }
-    mode = 'word';
-    busy = true;
+    if (micBusy){ try{ recognition.stop(); }catch(e){} return; }
+    micMode = 'word';
+    micBusy = true;
     letterBoxes = [];
     renderLetterBoxes();
     spellProgressEl.textContent = '';
@@ -693,21 +736,21 @@ if (SpeechRecognitionCtor){
     setListeningUI(true);
     setStatus('단어를 통째로 한 번에 말해주세요.', false);
     try{ recognition.start(); }
-    catch(err){ busy = false; mode = null; setListeningUI(false); setStatus('음성 인식을 시작할 수 없어요.', true); }
+    catch(err){ micBusy = false; micMode = null; setListeningUI(false); setStatus('음성 인식을 시작할 수 없어요.', true); }
   });
 
-  function startBoxCapture(index){
-    if (busy){ try{ recognition.stop(); }catch(e){} return; }
-    mode = index;
-    busy = true;
+  startBoxCapture = function(index){
+    if (micBusy){ try{ recognition.stop(); }catch(e){} return; }
+    micMode = index;
+    micBusy = true;
     spellProgressEl.textContent = '';
     debugPanelEl.textContent = '';
     setListeningUI(true);
     highlightBox(index, true);
     setStatus((index+1)+'번째 칸: 알파벳 하나를 나토 발음(Alpha, Bravo...)으로 말해주세요.', false);
     try{ recognition.start(); }
-    catch(err){ busy = false; mode = null; setListeningUI(false); highlightBox(index, false); setStatus('음성 인식을 시작할 수 없어요.', true); }
-  }
+    catch(err){ micBusy = false; micMode = null; setListeningUI(false); highlightBox(index, false); setStatus('음성 인식을 시작할 수 없어요.', true); }
+  };
 }else{
   micBtn.addEventListener('click', ()=> setStatus('이 브라우저는 음성 인식을 지원하지 않아요. Chrome을 사용해보세요.', true));
 }
