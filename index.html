@@ -87,6 +87,14 @@
   .spell-progress{ font-family:'JetBrains Mono', monospace; font-size:13px; color:var(--sage); letter-spacing:.08em; min-height:18px; padding:4px 2px 0; }
   .debug-panel{ font-family:'JetBrains Mono', monospace; font-size:11.5px; color:#6b6250; background:#fff; border:1px dashed var(--rule); border-radius:3px; padding:8px 10px; margin-top:6px; white-space:pre-line; min-height:14px; }
   .debug-panel .win{ color:var(--sage); font-weight:700; }
+  .letterbox-row{ display:flex; flex-wrap:wrap; gap:8px; margin-top:14px; }
+  .letter-box{ width:42px; height:42px; border:2px solid var(--rule); border-radius:6px; background:#fff; font-family:'JetBrains Mono', monospace; font-size:19px; font-weight:700; color:var(--ink); display:flex; align-items:center; justify-content:center; cursor:pointer; transition:border-color .15s, background .15s; padding:0; }
+  .letter-box:hover{ border-color:var(--gold); }
+  .letter-box.empty{ border-style:dashed; color:#c9bfa0; }
+  .letter-box.add-box{ border-style:dashed; color:var(--sage); font-size:22px; font-weight:400; }
+  .letter-box.listening{ border-color:var(--red-pin); background:#fdeceb; animation:boxpulse 1s ease-in-out infinite; }
+  @keyframes boxpulse{ 0%,100%{ box-shadow:0 0 0 0 rgba(166,70,47,.35); } 50%{ box-shadow:0 0 0 6px rgba(166,70,47,0); } }
+  .letterbox-hint{ font-size:11.5px; color:#9a8f6f; margin-top:6px; }
   .recent-row{ display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-top:14px; }
   .recent-row .recent{ margin-top:0; flex:1; }
   .review-btns{ display:flex; gap:8px; flex-wrap:wrap; }
@@ -111,8 +119,8 @@
   </div>
 
   <div class="search-drawer">
-    <input type="text" id="wordInput" placeholder="단어를 입력하거나 마이크를 눌러 말해보세요 (예: run)" autocomplete="off">
-    <button class="icon-btn" id="micBtn" title="음성으로 검색">
+    <input type="text" id="wordInput" placeholder="단어를 입력하거나 마이크로 단어를 말해보세요 (예: run)" autocomplete="off">
+    <button class="icon-btn" id="micBtn" title="음성으로 단어 말하기">
       <span class="mic-icon" id="micIconStatic">
         <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
           <path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Z" stroke="currentColor" stroke-width="1.6"/>
@@ -129,6 +137,8 @@
   <div id="status"></div>
   <div class="spell-progress" id="spellProgress"></div>
   <div class="debug-panel" id="debugPanel"></div>
+  <div class="letterbox-row" id="letterBoxRow"></div>
+  <div class="letterbox-hint">칸을 누르면 그 글자만 다시 말해서 고칠 수 있어요. "+"를 누르면 칸이 추가돼요.</div>
   <div class="recent-row">
     <div class="recent" id="recent"></div>
     <div class="review-btns">
@@ -577,139 +587,127 @@ function resolveChunk(speechResult){
   return { letter: winner ? winner.letter : '', alternatives, winnerIndex: winner ? winner.index : -1 };
 }
 
+let letterBoxes = []; // array of single-char strings; '' means an empty/unfilled box
+
+function renderLetterBoxes(){
+  const row = document.getElementById('letterBoxRow');
+  row.innerHTML = '';
+  letterBoxes.forEach((ch, i)=>{
+    const box = document.createElement('button');
+    box.className = 'letter-box' + (ch ? '' : ' empty');
+    box.textContent = ch ? ch.toUpperCase() : '?';
+    box.title = '눌러서 이 글자만 다시 말하기';
+    box.onclick = ()=> startBoxCapture(i);
+    row.appendChild(box);
+  });
+  const addBtn = document.createElement('button');
+  addBtn.className = 'letter-box add-box';
+  addBtn.textContent = '+';
+  addBtn.title = '글자 칸 추가';
+  addBtn.onclick = ()=>{
+    letterBoxes.push('');
+    renderLetterBoxes();
+    startBoxCapture(letterBoxes.length - 1);
+  };
+  row.appendChild(addBtn);
+  syncWordInputFromBoxes();
+}
+function syncWordInputFromBoxes(){
+  document.getElementById('wordInput').value = letterBoxes.join('');
+}
+function highlightBox(index, on){
+  const row = document.getElementById('letterBoxRow');
+  const box = row.children[index];
+  if (box) box.classList.toggle('listening', on);
+}
+
 if (SpeechRecognitionCtor){
   const recognition = new SpeechRecognitionCtor();
   recognition.lang = 'en-US';
-  recognition.continuous = false;   // Chrome's continuous:true is unreliable and duplicates/piles up results over time.
+  recognition.continuous = false;
   recognition.interimResults = true;
   recognition.maxAlternatives = 5; // check multiple guesses, not just the top one — helps when the top guess is wrong
 
-  let listening = false;      // whole spelling session (mic button toggled on)
-  let spelledParts = [];
-  let doneTimer = null;
-  let watchdogTimer = null;
-  let finalizedThisSession = true; // true = no active session yet
-  let restartFailCount = 0;
-  const SILENCE_MS = 2800;
+  let busy = false;
+  let mode = null; // 'word' | a letter-box index number
 
   function setListeningUI(on){
     micBtn.classList.toggle('listening', on);
     micBars.style.display = on ? 'flex' : 'none';
     micIconStatic.style.display = on ? 'none' : 'flex';
   }
-  function updateProgress(interimText){
-    const combined = (spelledParts.join('') + (interimText||'')).toLowerCase().replace(/[^a-z]/g,'');
-    spellProgressEl.textContent = combined ? '인식 중: ' + combined.split('').join(' ').toUpperCase() : '';
-  }
-  function doFinalize(){
-    // guarded so a session is ever finalized exactly once, no matter which
-    // path triggers it (normal onend, watchdog safety-net, or manual stop)
-    if (finalizedThisSession) return;
-    finalizedThisSession = true;
-    listening = false;
+  function stopListeningVisuals(){
     setListeningUI(false);
-    if (doneTimer){ clearTimeout(doneTimer); doneTimer = null; }
-    if (watchdogTimer){ clearTimeout(watchdogTimer); watchdogTimer = null; }
-    finalizeAndSearch();
-  }
-  function scheduleAutoFinish(){
-    if (doneTimer) clearTimeout(doneTimer);
-    doneTimer = setTimeout(()=>{
-      try{ recognition.stop(); }catch(e){}
-      // safety net: if stop() doesn't actually produce an onend event
-      // (e.g. it fired mid-restart and had nothing to stop), finalize anyway
-      if (watchdogTimer) clearTimeout(watchdogTimer);
-      watchdogTimer = setTimeout(doFinalize, 500);
-    }, SILENCE_MS);
-  }
-  function finalizeAndSearch(){
-    const word = spelledParts.join('').toLowerCase().replace(/[^a-z]/g,'');
-    spelledParts = [];
-    spellProgressEl.textContent = '';
-    if (word){
-      document.getElementById('wordInput').value = word;
-      lookupWord(word);
-    } else {
-      setStatus('아무 소리도 인식하지 못했어요. 다시 시도해주세요.', true);
-    }
+    if (typeof mode === 'number') highlightBox(mode, false);
   }
 
   recognition.onresult = (e)=>{
     const res = e.results[e.results.length - 1];
-    const transcript = res[0].transcript; // top guess, only used for the live progress display
-    if (res.isFinal){
-      const result = resolveChunk(res); // checks all ranked alternatives, not just the top one
-      renderDebug(result.alternatives, result.winnerIndex);
-      if (result.letter) spelledParts.push(result.letter);
-      updateProgress('');
-    } else {
-      updateProgress(transcript);
-    }
-    scheduleAutoFinish();
-  };
-  recognition.onstart = ()=>{
-    restartFailCount = 0;
-    // give a fresh full window every time a new listening cycle actually starts,
-    // so the restart gap between utterances doesn't eat into the pause budget
-    scheduleAutoFinish();
-  };
-  recognition.onerror = (e)=>{
-    if (e.error === 'no-speech' || e.error === 'aborted') return;
-    if (e.error === 'not-allowed' || e.error === 'service-not-allowed'){
-      setStatus('마이크 권한이 필요해요. 브라우저 설정에서 허용해주세요.', true);
-      doFinalize();
+    if (!res.isFinal){
+      spellProgressEl.textContent = '인식 중: ' + res[0].transcript;
       return;
     }
-    setStatus('음성 인식 오류: ' + e.error, true);
-    doFinalize();
+    if (mode === 'word'){
+      const raw = res[0].transcript;
+      const word = raw.toLowerCase().replace(/[^a-z]/g,'');
+      debugPanelEl.textContent = '인식된 단어: "' + raw + '" → ' + (word || '(글자 없음)');
+      if (word){
+        letterBoxes = word.split('');
+        renderLetterBoxes();
+      } else {
+        setStatus('단어를 알아듣지 못했어요. 다시 말해주세요.', true);
+      }
+    } else if (typeof mode === 'number'){
+      const result = resolveChunk(res);
+      renderDebug(result.alternatives, result.winnerIndex);
+      if (result.letter){
+        letterBoxes[mode] = result.letter;
+        renderLetterBoxes();
+      } else {
+        setStatus('글자를 알아듣지 못했어요. 칸을 다시 눌러 말해주세요.', true);
+      }
+    }
+    spellProgressEl.textContent = '';
+  };
+  recognition.onerror = (e)=>{
+    if (e.error === 'not-allowed' || e.error === 'service-not-allowed'){
+      setStatus('마이크 권한이 필요해요. 브라우저 설정에서 허용해주세요.', true);
+    } else if (e.error !== 'no-speech' && e.error !== 'aborted'){
+      setStatus('음성 인식 오류: ' + e.error, true);
+    }
   };
   recognition.onend = ()=>{
-    if (listening){
-      // one short utterance just ended (a letter/word) — immediately listen for the next one
-      try{
-        recognition.start();
-      } catch(err){
-        restartFailCount++;
-        if (restartFailCount > 5){
-          // repeatedly failing to restart — stop trying and wrap up gracefully
-          doFinalize();
-          return;
-        }
-        setTimeout(()=>{
-          try{ recognition.start(); } catch(e2){ doFinalize(); }
-        }, 100);
-      }
-    } else {
-      doFinalize();
-    }
+    busy = false;
+    stopListeningVisuals();
+    mode = null;
   };
 
   micBtn.addEventListener('click', ()=>{
-    if (listening){
-      listening = false;
-      try{ recognition.stop(); }catch(e){}
-      if (watchdogTimer) clearTimeout(watchdogTimer);
-      watchdogTimer = setTimeout(doFinalize, 500); // safety net for manual stop too
-      return;
-    }
-    finalizedThisSession = false;
-    listening = true;
-    restartFailCount = 0;
-    spelledParts = [];
-    document.getElementById('wordInput').value = '';
+    if (busy){ try{ recognition.stop(); }catch(e){} return; }
+    mode = 'word';
+    busy = true;
+    letterBoxes = [];
+    renderLetterBoxes();
     spellProgressEl.textContent = '';
     debugPanelEl.textContent = '';
     setListeningUI(true);
-    setStatus('듣고 있어요... 알파벳은 Alpha, Bravo, Charlie처럼 나토 발음으로 말해주세요. 잠시 멈추면 자동으로 검색해요.', false);
-    try{
-      recognition.start();
-    } catch(err){
-      listening = false;
-      finalizedThisSession = true;
-      setListeningUI(false);
-      setStatus('음성 인식을 시작할 수 없어요.', true);
-    }
+    setStatus('단어를 통째로 한 번에 말해주세요.', false);
+    try{ recognition.start(); }
+    catch(err){ busy = false; mode = null; setListeningUI(false); setStatus('음성 인식을 시작할 수 없어요.', true); }
   });
+
+  function startBoxCapture(index){
+    if (busy){ try{ recognition.stop(); }catch(e){} return; }
+    mode = index;
+    busy = true;
+    spellProgressEl.textContent = '';
+    debugPanelEl.textContent = '';
+    setListeningUI(true);
+    highlightBox(index, true);
+    setStatus((index+1)+'번째 칸: 알파벳 하나를 나토 발음(Alpha, Bravo...)으로 말해주세요.', false);
+    try{ recognition.start(); }
+    catch(err){ busy = false; mode = null; setListeningUI(false); highlightBox(index, false); setStatus('음성 인식을 시작할 수 없어요.', true); }
+  }
 }else{
   micBtn.addEventListener('click', ()=> setStatus('이 브라우저는 음성 인식을 지원하지 않아요. Chrome을 사용해보세요.', true));
 }
